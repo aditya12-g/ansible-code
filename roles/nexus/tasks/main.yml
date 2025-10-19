@@ -1,0 +1,14 @@
+---
+- name: Download Nexus OSS
+  get_url:
+    url: https://download.sonatype.com/nexus/3/latest-unix.tar.gz
+    dest: /opt/nexus.tar.gz
+
+- name: Extract Nexus
+  unarchive:
+    src: /opt/nexus.tar.gz
+    dest: /opt/
+    remote_src: yes
+
+- name: Start Nexus
+  shell: "/opt/nexus-3*/bin/nexus start"

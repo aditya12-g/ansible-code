@@ -1,0 +1,22 @@
+---
+- name: Setup all tools
+  hosts: all
+  become: yes
+  roles:
+    - docker
+
+- name: Setup Jenkins Server
+  hosts: jenkins
+  become: yes
+  roles:
+    - jenkins
+    - sonarqube
+    - nexus
+    - trivy
+
+- name: Setup Kubernetes Master Node
+  hosts: k8s_master
+  become: yes
+  roles:
+    - prometheus
+    - grafana
