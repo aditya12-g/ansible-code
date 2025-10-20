@@ -18,5 +18,12 @@
   hosts: k8s_master
   become: yes
   roles:
+    - kubernetes
     - prometheus
     - grafana
+
+- name: Setup Kubernetes Worker Nodes
+  hosts: k8s_worker
+  become: yes
+  roles:
+    - worker
