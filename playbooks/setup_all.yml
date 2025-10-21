@@ -13,6 +13,7 @@
     - sonarqube
     - nexus
     - trivy
+    - aws-cli
 
 - name: Setup Kubernetes Master Node
   hosts: k8s_master
