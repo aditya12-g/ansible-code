@@ -14,6 +14,7 @@
     - nexus
     - trivy
     - aws-cli
+    - helm
 
 - name: Setup Kubernetes Master Node
   hosts: k8s_master
