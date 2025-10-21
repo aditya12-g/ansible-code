@@ -1,24 +1,21 @@
 ---
-- name: Join Kubernetes Worker Nodes
-  hosts: kubernetes-worker
-  become: yes
-  tasks:
-    - name: Fetch join command from master
-      command: kubeadm token create --print-join-command
-      register: join_cmd
-      delegate_to: "{{ groups['kubernetes-master'][0] }}"
-      run_once: true
-      changed_when: false
+- name: Fetch join command from master
+  command: kubeadm token create --print-join-command
+  register: join_cmd
+  delegate_to: "{{ groups['k8s_master'][0] }}"
+  run_once: true
+  changed_when: false
 
-    - name: Write join command to temp file on worker
-      copy:
-        content: "{{ join_cmd.stdout }} --ignore-preflight-errors=all"
-        dest: /tmp/kube_join.sh
-        mode: '0700'
+- name: Write join command to temp file on worker
+  copy:
+    content: "{{ join_cmd.stdout }}"
+    dest: /tmp/kube_join.sh
+    mode: '0700'
 
-    - name: Join Kubernetes worker to cluster
-      command: sh /tmp/kube_join.sh
-      args:
-        creates: /etc/kubernetes/kubelet.conf
+- name: Join Kubernetes worker to cluster
+  command: sh /tmp/kube_join.sh
+  args:
+    creates: /etc/kubernetes/kubelet.conf
+
 
 
