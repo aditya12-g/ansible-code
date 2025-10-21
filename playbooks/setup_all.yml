@@ -14,15 +14,15 @@
     - nexus
     - trivy
     - aws-cli
-    - helm
+    
 
 - name: Setup Kubernetes Master Node
   hosts: k8s_master
   become: yes
   roles:
     - kubernetes
-    - prometheus
-    - grafana
+    - helm
+    - monitoring
 
 - name: Setup Kubernetes Worker Nodes
   hosts: k8s_worker

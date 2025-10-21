@@ -1,14 +1,16 @@
----
-- name: Download Nexus OSS
-  get_url:
-    url: https://download.sonatype.com/nexus/3/latest-unix.tar.gz
-    dest: /opt/nexus.tar.gz
+# roles/nexus/tasks/main.yml
+- name: Pull latest Nexus Docker image
+  docker_image:
+    name: sonatype/nexus3
+    source: pull
 
-- name: Extract Nexus
-  unarchive:
-    src: /opt/nexus.tar.gz
-    dest: /opt/
-    remote_src: yes
-
-- name: Start Nexus
-  shell: "/opt/nexus-3*/bin/nexus start"
+- name: Run Nexus container
+  docker_container:
+    name: nexus
+    image: sonatype/nexus3
+    state: started
+    restart_policy: always
+    ports:
+      - "8081:8081"
+    volumes:
+      - /mnt/docker/nexus-data:/nexus-data

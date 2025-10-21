@@ -1,0 +1,5 @@
+# roles/trivy/tasks/main.yml
+- name: Pull Trivy Docker image
+  docker_image:
+    name: aquasec/trivy:latest
+    source: pull
