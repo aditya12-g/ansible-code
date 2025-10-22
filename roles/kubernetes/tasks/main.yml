@@ -1,20 +1,20 @@
 ---
 # ==============================
-# Kubernetes Master Node Setup (Ubuntu)
+# Kubernetes Master Setup (Ubuntu)
 # ==============================
 
 - name: Disable swap
   command: swapoff -a
   become: yes
 
-- name: Ensure swap is disabled permanently
+- name: Remove swap entry from fstab
   replace:
     path: /etc/fstab
     regexp: '^([^#].*swap.*)$'
     replace: '# \1'
   become: yes
 
-- name: Load kernel modules (overlay & br_netfilter)
+- name: Load kernel modules
   copy:
     dest: /etc/modules-load.d/k8s.conf
     content: |
@@ -22,81 +22,89 @@
       br_netfilter
   become: yes
 
-- name: Load kernel modules immediately
+- name: Load required kernel modules immediately
   command: modprobe {{ item }}
   loop:
     - overlay
     - br_netfilter
   become: yes
 
-- name: Configure sysctl params for Kubernetes networking
+- name: Set sysctl params for Kubernetes
   copy:
     dest: /etc/sysctl.d/k8s.conf
     content: |
       net.bridge.bridge-nf-call-ip6tables = 1
       net.bridge.bridge-nf-call-iptables = 1
-      net.ipv4.ip_forward = 1
   become: yes
 
-- name: Apply sysctl parameters
+- name: Apply sysctl changes
   command: sysctl --system
   become: yes
 
 # ==============================
-# Kubernetes Repository Setup
+# Install Kubernetes Packages
 # ==============================
-- name: Add Kubernetes APT repository
-  shell: |
-    apt-get update -y
-    apt-get install -y apt-transport-https ca-certificates curl gpg
-    mkdir -p /etc/apt/keyrings
-    curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | \
-      gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-    echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] \
-      https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /' | \
-      tee /etc/apt/sources.list.d/kubernetes.list
-    apt-get update -y
-  args:
-    executable: /bin/bash
+- name: Ensure dependencies are installed
+  apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+    state: present
+    update_cache: yes
   become: yes
 
-# ==============================
-# Kubernetes Package Installation
-# ==============================
-- name: Install Kubernetes components
+- name: Add Google Cloud public signing key
+  ansible.builtin.shell: |
+    curl -fsSL https://dl.k8s.io/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/kubernetes.gpg
+  args:
+    creates: /etc/apt/trusted.gpg.d/kubernetes.gpg
+  become: yes
+
+- name: Add Kubernetes APT repository
+  copy:
+    dest: /etc/apt/sources.list.d/kubernetes.list
+    content: |
+      deb [signed-by=/etc/apt/trusted.gpg.d/kubernetes.gpg] https://apt.kubernetes.io/ kubernetes-xenial main
+  become: yes
+
+- name: Update APT cache
+  apt:
+    update_cache: yes
+  become: yes
+
+- name: Install Kubernetes packages
   apt:
     name:
       - kubelet
       - kubeadm
       - kubectl
     state: present
-    update_cache: yes
   become: yes
 
-- name: Hold Kubernetes packages to prevent automatic upgrade
+- name: Hold Kubernetes packages
   command: apt-mark hold kubelet kubeadm kubectl
   become: yes
 
 # ==============================
-# Kubernetes Master Initialization
+# Initialize Kubernetes Master
 # ==============================
-- name: Initialize Kubernetes Master
+- name: Initialize Kubernetes master node
   command: kubeadm init --pod-network-cidr=10.244.0.0/16
   when: "'k8s_master' in group_names"
   become: yes
 
 - name: Setup kubeconfig for ubuntu user
-  shell: |
-    mkdir -p /home/ubuntu/.kube
-    cp -i /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
+  command: >
+    mkdir -p /home/ubuntu/.kube &&
+    cp -i /etc/kubernetes/admin.conf /home/ubuntu/.kube/config &&
     chown ubuntu:ubuntu /home/ubuntu/.kube/config
-  args:
-    executable: /bin/bash
   when: "'k8s_master' in group_names"
   become: yes
 
-- name: Install Flannel CNI Plugin
+- name: Install Flannel CNI
   command: kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
   when: "'k8s_master' in group_names"
   become: yes
+
 
