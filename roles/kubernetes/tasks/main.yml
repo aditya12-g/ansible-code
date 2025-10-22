@@ -3,6 +3,13 @@
   command: swapoff -a
   become: yes
 
+- name: Ensure swap is disabled on reboot
+  replace:
+    path: /etc/fstab
+    regexp: '^(.*swap.*)$'
+    replace: '# \1'
+  become: yes
+
 - name: Load kernel modules
   copy:
     dest: /etc/modules-load.d/k8s.conf
@@ -30,6 +37,19 @@
   command: sysctl --system
   become: yes
 
+# ✅ Add Kubernetes repository (required for kubelet, kubeadm, kubectl)
+- name: Add Kubernetes APT repository
+  shell: |
+    apt-get update -y
+    apt-get install -y apt-transport-https ca-certificates curl gpg
+    mkdir -p /etc/apt/keyrings
+    curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /' | tee /etc/apt/sources.list.d/kubernetes.list
+    apt-get update -y
+  args:
+    executable: /bin/bash
+  become: yes
+
 - name: Install Kubernetes packages
   apt:
     name:
@@ -49,21 +69,23 @@
     state: hold
   become: yes
 
+# ✅ Only for master node
 - name: Initialize Kubernetes master
   command: kubeadm init --pod-network-cidr=10.244.0.0/16
   when: "'kubernetes-master' in group_names"
   become: yes
 
 - name: Setup kubeconfig for ubuntu user
-  command: >
-    mkdir -p /home/ubuntu/.kube &&
-    cp -i /etc/kubernetes/admin.conf /home/ubuntu/.kube/config &&
+  shell: |
+    mkdir -p /home/ubuntu/.kube
+    cp -i /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
     chown ubuntu:ubuntu /home/ubuntu/.kube/config
+  args:
+    executable: /bin/bash
   when: "'kubernetes-master' in group_names"
   become: yes
 
-- name: Install Flannel CNI
+- name: Install Flannel CNI (Network Plugin)
   command: kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
   when: "'kubernetes-master' in group_names"
   become: yes
-
