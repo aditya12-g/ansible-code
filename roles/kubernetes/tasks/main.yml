@@ -120,6 +120,13 @@
     state: present
   become: yes
 
+- name: Restart kubelet service
+  systemd:
+    name: kubelet
+    state: restarted
+    enabled: yes
+  become: yes
+
 - name: Hold Kubernetes packages
   command: apt-mark hold kubelet kubeadm kubectl
   become: yes
@@ -128,7 +135,7 @@
 # Initialize Kubernetes Master
 # ==============================
 - name: Initialize Kubernetes master node
-  command: kubeadm init --pod-network-cidr=10.244.0.0/16
+  command: kubeadm init --pod-network-cidr=10.244.0.0/16 --ignore-preflight-errors=all
   when: "'k8s_master' in group_names"
   become: yes
 
@@ -147,15 +154,6 @@
   when: "'k8s_master' in group_names"
   become: yes
 
-# ==============================
-# Restart kubelet
-# ==============================
-- name: Restart kubelet service
-  systemd:
-    name: kubelet
-    state: restarted
-    enabled: yes
-  become: yes
 
 
 
