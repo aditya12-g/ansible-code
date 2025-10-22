@@ -1,6 +1,6 @@
 ---
 # ==============================
-# Kubernetes Master Setup (Ubuntu)
+# Kubernetes Master Setup (Ubuntu 20.04 / 22.04)
 # ==============================
 
 - name: Disable swap
@@ -14,6 +14,9 @@
     replace: '# \1'
   become: yes
 
+# ==============================
+# Kernel Modules and Sysctl
+# ==============================
 - name: Load kernel modules
   copy:
     dest: /etc/modules-load.d/k8s.conf
@@ -42,7 +45,7 @@
   become: yes
 
 # ==============================
-# Install Kubernetes Packages
+# Install Kubernetes Packages (v1.30+ repo)
 # ==============================
 - name: Ensure dependencies are installed
   apt:
@@ -50,22 +53,24 @@
       - apt-transport-https
       - ca-certificates
       - curl
+      - gpg
     state: present
     update_cache: yes
   become: yes
 
-- name: Add Google Cloud public signing key
+- name: Add Kubernetes APT key (v1.30 repo)
   ansible.builtin.shell: |
-    curl -fsSL https://dl.k8s.io/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/kubernetes.gpg
+    sudo mkdir -p /etc/apt/keyrings
+    curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
   args:
-    creates: /etc/apt/trusted.gpg.d/kubernetes.gpg
+    executable: /bin/bash
   become: yes
 
 - name: Add Kubernetes APT repository
-  copy:
-    dest: /etc/apt/sources.list.d/kubernetes.list
-    content: |
-      deb [signed-by=/etc/apt/trusted.gpg.d/kubernetes.gpg] https://apt.kubernetes.io/ kubernetes-xenial main
+  ansible.builtin.shell: |
+    echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /" | sudo tee /etc/apt/sources.list.d/kubernetes.list
+  args:
+    executable: /bin/bash
   become: yes
 
 - name: Update APT cache
@@ -95,10 +100,12 @@
   become: yes
 
 - name: Setup kubeconfig for ubuntu user
-  command: >
-    mkdir -p /home/ubuntu/.kube &&
-    cp -i /etc/kubernetes/admin.conf /home/ubuntu/.kube/config &&
+  shell: |
+    mkdir -p /home/ubuntu/.kube
+    cp -i /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
     chown ubuntu:ubuntu /home/ubuntu/.kube/config
+  args:
+    executable: /bin/bash
   when: "'k8s_master' in group_names"
   become: yes
 
@@ -106,5 +113,6 @@
   command: kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
   when: "'k8s_master' in group_names"
   become: yes
+
 
 
