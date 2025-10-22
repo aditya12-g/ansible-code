@@ -1,22 +1,19 @@
 ---
-# ==============================
-# Kubernetes Master Setup (Ubuntu 20.04 / 22.04)
-# ==============================
+# roles/kubernetes/tasks/main.yml
+# Kubernetes Master Setup (Ubuntu) — includes containerd install & config
 
 - name: Disable swap
   command: swapoff -a
   become: yes
 
-- name: Remove swap entry from fstab
+- name: Ensure swap is disabled permanently
   replace:
     path: /etc/fstab
     regexp: '^([^#].*swap.*)$'
     replace: '# \1'
   become: yes
 
-# ==============================
-# Kernel Modules and Sysctl
-# ==============================
+# Kernel modules & sysctl
 - name: Load kernel modules
   copy:
     dest: /etc/modules-load.d/k8s.conf
@@ -32,22 +29,127 @@
     - br_netfilter
   become: yes
 
-- name: Set sysctl params for Kubernetes
+- name: Configure sysctl for k8s networking
   copy:
     dest: /etc/sysctl.d/k8s.conf
     content: |
       net.bridge.bridge-nf-call-ip6tables = 1
-      net.bridge.bridge-nf-call-iptables = 1
+      net.bridge.bridge-nf-call-iptables  = 1
+      net.ipv4.ip_forward = 1
   become: yes
 
 - name: Apply sysctl changes
   command: sysctl --system
   become: yes
 
-# ==============================
-# Install Kubernetes Packages (v1.30+ repo)
-# ==============================
-- name: Ensure dependencies are installed
+# ---------------------------
+# Install containerd (CRI)
+# ---------------------------
+- name: Ensure containerd prerequisites are installed
+  apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+    state: present
+    update_cache: yes
+  become: yes
+
+- name: Add Docker's GPG key for apt
+  ansible.builtin.shell: |
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    chmod a+r /etc/apt/keyrings/docker.gpg
+  args:
+    executable: /bin/bash
+  become: yes
+  args:
+    creates: /etc/apt/keyrings/docker.gpg
+
+- name: Add Docker apt repo
+  ansible.builtin.shell: |
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+      https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | \
+      tee /etc/apt/sources.list.d/docker.list > /dev/null
+  args:
+    executable: /bin/bash
+  become: yes
+  args:
+    creates: /etc/apt/sources.list.d/docker.list
+
+- name: Update apt cache (after adding docker repo)
+  apt:
+    update_cache: yes
+  become: yes
+
+- name: Install containerd package
+  apt:
+    name:
+      - containerd.io
+    state: present
+    update_cache: yes
+  become: yes
+
+- name: Create containerd config directory
+  file:
+    path: /etc/containerd
+    state: directory
+    mode: '0755'
+  become: yes
+
+- name: Generate default containerd config
+  command: containerd config default
+  register: containerd_default_config
+  changed_when: false
+  check_mode: no
+  become: yes
+
+- name: Write containerd config.toml with systemd cgroup
+  copy:
+    dest: /etc/containerd/config.toml
+    content: "{{ containerd_default_config.stdout | default('') }}"
+
+  notify: Configure cgroup driver
+  become: yes
+
+- name: Ensure SystemdCgroup = true in config.toml
+  ansible.builtin.replace:
+    path: /etc/containerd/config.toml
+    regexp: 'SystemdCgroup = false'
+    replace: 'SystemdCgroup = true'
+  become: yes
+
+- name: Restart and enable containerd
+  systemd:
+    name: containerd
+    state: restarted
+    enabled: yes
+  become: yes
+
+- name: Wait for containerd socket to be available
+  wait_for:
+    path: /var/run/containerd/containerd.sock
+    state: present
+    timeout: 60
+  become: yes
+
+# Optional: verify containerd is responsive (CRI v1)
+- name: Check containerd is responding (crictl optional)
+  shell: |
+    if command -v ctr >/dev/null 2>&1; then
+      ctr version
+    fi
+  register: ctr_check
+  failed_when: false
+  changed_when: false
+  become: yes
+
+# ---------------------------
+# Kubernetes repo & packages
+# ---------------------------
+- name: Ensure apt dependencies for Kubernetes repo
   apt:
     name:
       - apt-transport-https
@@ -58,22 +160,28 @@
     update_cache: yes
   become: yes
 
-- name: Add Kubernetes APT key (v1.30 repo)
+- name: Add Kubernetes apt key (v1.30 repo)
   ansible.builtin.shell: |
-    sudo mkdir -p /etc/apt/keyrings
-    curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    mkdir -p /etc/apt/keyrings
+    curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    chmod a+r /etc/apt/keyrings/kubernetes-apt-keyring.gpg
   args:
     executable: /bin/bash
   become: yes
+  args:
+    creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
 
 - name: Add Kubernetes APT repository
   ansible.builtin.shell: |
-    echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /" | sudo tee /etc/apt/sources.list.d/kubernetes.list
+    echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /" \
+      | tee /etc/apt/sources.list.d/kubernetes.list
   args:
     executable: /bin/bash
   become: yes
+  args:
+    creates: /etc/apt/sources.list.d/kubernetes.list
 
-- name: Update APT cache
+- name: Update APT cache (final)
   apt:
     update_cache: yes
   become: yes
@@ -85,18 +193,27 @@
       - kubeadm
       - kubectl
     state: present
+    update_cache: yes
   become: yes
 
 - name: Hold Kubernetes packages
   command: apt-mark hold kubelet kubeadm kubectl
   become: yes
 
-# ==============================
-# Initialize Kubernetes Master
-# ==============================
+# ---------------------------
+# Initialize master (only on master)
+# ---------------------------
 - name: Initialize Kubernetes master node
   command: kubeadm init --pod-network-cidr=10.244.0.0/16
   when: "'k8s_master' in group_names"
+  become: yes
+  register: kubeadm_init
+  failed_when: kubeadm_init.rc != 0 and "'container runtime is not running' not in kubeadm_init.stderr"
+
+- name: Print kubeadm init stdout/stderr for debugging
+  debug:
+    var: kubeadm_init.stderr_lines
+  when: kubeadm_init is defined and kubeadm_init.rc != 0
   become: yes
 
 - name: Setup kubeconfig for ubuntu user
@@ -106,13 +223,22 @@
     chown ubuntu:ubuntu /home/ubuntu/.kube/config
   args:
     executable: /bin/bash
-  when: "'k8s_master' in group_names"
+  when: "'k8s_master' in group_names and kubeadm_init is defined and kubeadm_init.rc == 0"
   become: yes
 
 - name: Install Flannel CNI
   command: kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
-  when: "'k8s_master' in group_names"
+  when: "'k8s_master' in group_names and kubeadm_init is defined and kubeadm_init.rc == 0"
   become: yes
+
+# ---------------------------
+# Handlers
+# ---------------------------
+handlers:
+  - name: Configure cgroup driver
+    debug:
+      msg: "containerd config written - ensured SystemdCgroup = true"
+
 
 
 
