@@ -1,16 +1,20 @@
 ---
+# ==============================
+# Kubernetes Master Node Setup (Ubuntu)
+# ==============================
+
 - name: Disable swap
   command: swapoff -a
   become: yes
 
-- name: Ensure swap is disabled on reboot
+- name: Ensure swap is disabled permanently
   replace:
     path: /etc/fstab
-    regexp: '^(.*swap.*)$'
+    regexp: '^([^#].*swap.*)$'
     replace: '# \1'
   become: yes
 
-- name: Load kernel modules
+- name: Load kernel modules (overlay & br_netfilter)
   copy:
     dest: /etc/modules-load.d/k8s.conf
     content: |
@@ -18,39 +22,48 @@
       br_netfilter
   become: yes
 
-- name: Load required kernel modules immediately
+- name: Load kernel modules immediately
   command: modprobe {{ item }}
   loop:
     - overlay
     - br_netfilter
   become: yes
 
-- name: Set sysctl params for Kubernetes
+- name: Configure sysctl params for Kubernetes networking
   copy:
     dest: /etc/sysctl.d/k8s.conf
     content: |
       net.bridge.bridge-nf-call-ip6tables = 1
       net.bridge.bridge-nf-call-iptables = 1
+      net.ipv4.ip_forward = 1
   become: yes
 
-- name: Apply sysctl changes immediately
+- name: Apply sysctl parameters
   command: sysctl --system
   become: yes
 
-# ✅ Add Kubernetes repository (required for kubelet, kubeadm, kubectl)
+# ==============================
+# Kubernetes Repository Setup
+# ==============================
 - name: Add Kubernetes APT repository
   shell: |
     apt-get update -y
     apt-get install -y apt-transport-https ca-certificates curl gpg
     mkdir -p /etc/apt/keyrings
-    curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-    echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /' | tee /etc/apt/sources.list.d/kubernetes.list
+    curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | \
+      gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] \
+      https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /' | \
+      tee /etc/apt/sources.list.d/kubernetes.list
     apt-get update -y
   args:
     executable: /bin/bash
   become: yes
 
-- name: Install Kubernetes packages
+# ==============================
+# Kubernetes Package Installation
+# ==============================
+- name: Install Kubernetes components
   apt:
     name:
       - kubelet
@@ -60,21 +73,16 @@
     update_cache: yes
   become: yes
 
-- name: Hold Kubernetes packages to prevent automatic upgrades
-  dpkg_selections:
-    name: "{{ item }}"
-    selection: hold
-  loop:
-    - kubelet
-    - kubeadm
-    - kubectl
+- name: Hold Kubernetes packages to prevent automatic upgrade
+  command: apt-mark hold kubelet kubeadm kubectl
   become: yes
 
-
-# ✅ Only for master node
-- name: Initialize Kubernetes master
+# ==============================
+# Kubernetes Master Initialization
+# ==============================
+- name: Initialize Kubernetes Master
   command: kubeadm init --pod-network-cidr=10.244.0.0/16
-  when: "'kubernetes-master' in group_names"
+  when: "'k8s_master' in group_names"
   become: yes
 
 - name: Setup kubeconfig for ubuntu user
@@ -84,10 +92,11 @@
     chown ubuntu:ubuntu /home/ubuntu/.kube/config
   args:
     executable: /bin/bash
-  when: "'kubernetes-master' in group_names"
+  when: "'k8s_master' in group_names"
   become: yes
 
-- name: Install Flannel CNI (Network Plugin)
+- name: Install Flannel CNI Plugin
   command: kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
-  when: "'kubernetes-master' in group_names"
+  when: "'k8s_master' in group_names"
   become: yes
+
